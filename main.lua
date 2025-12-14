@@ -77,6 +77,26 @@ local function strsplit(str, delimiter, fillTable)
    return fillTable
 end
 
+local function FindItemInBags(name)
+   if not name then return end
+   local search = strlower(name)
+   for bag = 0, 4 do
+      local slots = GetContainerNumSlots(bag)
+      if slots then
+         for slot = 1, slots do
+            local link = GetContainerItemLink(bag, slot)
+            if link then
+               local _, _, itemName = string.find(link, "%[(.+)%]")
+               if itemName and strlower(itemName) == search then
+                  local texture = GetContainerItemInfo(bag, slot)
+                  return bag, slot, texture
+               end
+            end
+         end
+      end
+   end
+end
+
 -- credit: https://github.com/DanielAdolfsson/CleverMacro
 local function GetSpellSlotByName(name)
    name = strlower(name)
@@ -95,13 +115,69 @@ local function GetSpellSlotByName(name)
    end
 end
 
+--self cast/use functions
+local function GetSpellTextureByName(spellName)
+   local slot = GetSpellSlotByName(spellName)
+   if slot then return GetSpellTexture(slot, 'spell') end
+end
+
+local function Flyout_CastSpellOnPlayerByName(spellName)
+   if not spellName then return end
+   if _G.SUPERWOW_VERSION then
+      CastSpellByName(spellName, "player")
+   else
+      local hadTarget = UnitExists("target")
+      TargetUnit("player")
+      CastSpellByName(spellName)
+      if hadTarget then TargetLastTarget() else ClearTarget() end
+   end
+end
+
+local function Flyout_UseItemOnPlayer(bag, slot)
+   if not bag or not slot then return end
+   local hadTarget = UnitExists("target")
+   TargetUnit("player")
+   UseContainerItem(bag, slot)
+   if hadTarget then TargetLastTarget() else ClearTarget() end
+end
+
 -- Returns <action>, <actionType>
 local function GetFlyoutActionInfo(action)
-   if GetSpellSlotByName(action) then
-      return GetSpellSlotByName(action), 0
-   elseif GetMacroIndexByName(action) then
-      return GetMacroIndexByName(action), 1
+   if not action then return end
+   local _, _, kw, rest = string.find(action, "^(%S+)%s+(.+)$")
+
+   if kw and rest then
+      if kw == "item" then
+         if FindItemInBags(rest) then return rest, 2 end
+      elseif kw == "selfItem" then
+         if FindItemInBags(rest) then return rest, 5 end
+      elseif kw == "rightSelfItem" then
+         if FindItemInBags(rest) then return rest, 6 end
+      end
+
+      if kw == "selfCast" then
+         if GetSpellSlotByName(rest) then return rest, 3 end
+      elseif kw == "rightSelfCast" then
+         if GetSpellSlotByName(rest) then return rest, 4 end
+      end
    end
+
+   local slot = GetSpellSlotByName(action)
+   if slot then return slot, 0 end
+
+   local macroIndex = GetMacroIndexByName(action)
+   if macroIndex and macroIndex > 0 then return macroIndex, 1 end
+
+   if FindItemInBags(action) then return action, 2 end
+end
+
+--flyout direction override
+local function ExtractDirectionOverride(body)
+   if strfind(body, "%[up%]") then return "TOP" end
+   if strfind(body, "%[down%]") then return "BOTTOM" end
+   if strfind(body, "%[left%]") then return "LEFT" end
+   if strfind(body, "%[right%]") then return "RIGHT" end
+   return nil
 end
 
 local function GetFlyoutDirection(button)
@@ -172,6 +248,15 @@ local function UpdateBarButton(slot)
                   body = strgsub(body, '%[icon%]', '')
                end
 
+               --extract direction override
+               button.flyoutDirectionOverride = ExtractDirectionOverride(body)
+               if button.flyoutDirectionOverride then
+                  body = strgsub(body, "%[up%]", "")
+                  body = strgsub(body, "%[down%]", "")
+                  body = strgsub(body, "%[left%]", "")
+                  body = strgsub(body, "%[right%]", "")
+               end
+
                body = strsub(body, e + 1)
 
                if not button.flyoutActions then
@@ -237,51 +322,62 @@ function Flyout_OnClick(button)
    if not button or not button.flyoutActionType or not button.flyoutAction then
       return
    end
+   
+   local actionType = button.flyoutActionType
+   local action = button.flyoutAction
+   local isRight = (arg1 == "RightButton")
 
-   if arg1 == nil or arg1 == 'LeftButton' then
-      if button.flyoutActionType == 0 then
-         CastSpell(button.flyoutAction, 'spell')
-      elseif button.flyoutActionType == 1 then
-         Flyout_ExecuteMacro(button.flyoutAction)
-      end
-
+   if actionType == 4 and isRight then
+      Flyout_CastSpellOnPlayerByName(action)
       Flyout_Hide(true)
-   elseif arg1 == 'RightButton' and button.flyoutParent then
-      local parent = button.flyoutParent
-      local oldAction = parent.flyoutActions[1]
-      local newAction = parent.flyoutActions[button:GetID()]
-      if oldAction ~= newAction then
-         local slot = ActionButton_GetPagedID(parent)
-         local macro = GetActionText(slot)
-         local name, icon, body, isLocal = GetMacroInfo(GetMacroIndexByName(macro))
+      return
+   end
 
-         local as, ae = string.find(body, oldAction, 1, true)
-         local bs, be = string.find(body, newAction, 1, true)
-         if as and bs then
-            if strfind(body, '%[icon%]') then
-               local texture = button:GetNormalTexture():GetTexture()
-               for i = 1, GetNumMacroIcons() do
-                  if GetMacroIconInfo(i) == texture then
-                     icon = i
-                     break
-                  end
-               end
-            end
+   if actionType == 6 and isRight then
+      local bag, slot = button.flyoutItemBag, button.flyoutItemSlot
+      if not bag then bag, slot = FindItemInBags(action) end
+      if bag then Flyout_UseItemOnPlayer(bag, slot) end
+      Flyout_Hide(true)
+      return
+   end
 
-            body =
-               string.sub(body, 1, as - 1)
-               .. newAction
-               .. string.sub(body, ae + 1, bs - 1)
-               .. oldAction
-               .. string.sub(body, be + 1)
-
-            EditMacro(GetMacroIndexByName(macro), macro, icon, body, isLocal)
-
-            Flyout_Show(parent)
-         end
+   if actionType == 0 or actionType == 4 then
+      if type(action) == "number" or tonumber(action) then
+         CastSpell(action, 'spell')
       else
-         button:SetChecked(0)
+         local slot = GetSpellSlotByName(action)
+         if slot then CastSpell(slot, 'spell') else CastSpellByName(action) end
       end
+      Flyout_Hide(true)
+      return
+   end
+
+   if actionType == 1 then
+      Flyout_ExecuteMacro(action)
+      Flyout_Hide(true)
+      return
+   end
+
+   if actionType == 2 then
+      local bag, slot = button.flyoutItemBag, button.flyoutItemSlot
+      if not bag then bag, slot = FindItemInBags(action) end
+      if bag then UseContainerItem(bag, slot) end
+      Flyout_Hide(true)
+      return
+   end
+
+   if actionType == 3 then
+      Flyout_CastSpellOnPlayerByName(action)
+      Flyout_Hide(true)
+      return
+   end
+
+   if actionType == 5 then
+      local bag, slot = button.flyoutItemBag, button.flyoutItemSlot
+      if not bag then bag, slot = FindItemInBags(action) end
+      if bag then Flyout_UseItemOnPlayer(bag, slot) end
+      Flyout_Hide(true)
+      return
    end
 end
 
@@ -326,15 +422,42 @@ local cooldownStart, cooldownDuration, cooldownEnable
 local function FlyoutBarButton_UpdateCooldown(button, reset)
    button = button or this
 
-   if button.flyoutActionType == 0 then
-      cooldownStart, cooldownDuration, cooldownEnable = GetSpellCooldown(button.flyoutAction, BOOKTYPE_SPELL)
-      if cooldownStart > 0 and cooldownDuration > 0 then
-         -- Start/Duration check is needed to get the shine animation.
-         CooldownFrame_SetTimer(button.cooldown, cooldownStart, cooldownDuration, cooldownEnable)
+   if button.flyoutActionType == 0 or button.flyoutActionType == 3 or button.flyoutActionType == 4 then
+      local spellSlot
+      if button.flyoutActionType == 0 then
+         spellSlot = button.flyoutAction
+      else
+         spellSlot = GetSpellSlotByName(button.flyoutAction)
+      end
+
+      if spellSlot then
+		cooldownStart, cooldownDuration, cooldownEnable = GetSpellCooldown(button.flyoutAction, BOOKTYPE_SPELL)
+		if cooldownStart > 0 and cooldownDuration > 0 then
+			-- Start/Duration check is needed to get the shine animation.
+			CooldownFrame_SetTimer(button.cooldown, cooldownStart, cooldownDuration, cooldownEnable)
+		elseif reset then
+			-- When switching flyouts, need to hide cooldown if it shouldn't be visible.
+			button.cooldown:Hide()
+         end
       elseif reset then
-         -- When switching flyouts, need to hide cooldown if it shouldn't be visible.
          button.cooldown:Hide()
       end
+
+   elseif button.flyoutActionType == 2 or button.flyoutActionType == 5 or button.flyoutActionType == 6 then
+      local bag, slot = button.flyoutItemBag, button.flyoutItemSlot
+      if not bag then bag, slot = FindItemInBags(button.flyoutAction) end
+
+      if bag then
+         cooldownStart, cooldownDuration, cooldownEnable = GetContainerItemCooldown(bag, slot)
+         if cooldownStart > 0 and cooldownDuration > 0 then
+            CooldownFrame_SetTimer(button.cooldown, cooldownStart, cooldownDuration, cooldownEnable)
+         elseif reset then
+            button.cooldown:Hide()
+         end
+      elseif reset then
+         button.cooldown:Hide()
+      end
+
    else
       button.cooldown:Hide()
    end
@@ -350,7 +473,7 @@ local function FlyoutButton_OnUpdate()
 end
 
 function Flyout_Show(button)
-   local direction = GetFlyoutDirection(button)
+   local direction = button.flyoutDirectionOverride or GetFlyoutDirection_Auto(button)
    local size = Flyout_Config['BUTTON_SIZE']
    local offset = size
 
@@ -377,22 +500,37 @@ function Flyout_Show(button)
 
       b.flyoutAction, b.flyoutActionType = GetFlyoutActionInfo(n)
 
+      b.flyoutItemBag = nil
+      b.flyoutItemSlot = nil
+
       if b.flyoutActionType == 0 then
          texture = GetSpellTexture(b.flyoutAction, 'spell')
       elseif b.flyoutActionType == 1 then
          _, texture = GetMacroInfo(b.flyoutAction)
+      elseif b.flyoutActionType == 2 then
+         local bag, slot, tex = FindItemInBags(b.flyoutAction)
+         b.flyoutItemBag = bag
+         b.flyoutItemSlot = slot
+         texture = tex
+      elseif b.flyoutActionType == 3 or b.flyoutActionType == 4 then
+         texture = GetSpellTextureByName(b.flyoutAction)
+      elseif b.flyoutActionType == 5 or b.flyoutActionType == 6 then
+         local bag, slot, tex = FindItemInBags(b.flyoutAction)
+         b.flyoutItemBag = bag
+         b.flyoutItemSlot = slot
+         texture = tex
       end
 
       if texture then
          b:ClearAllPoints()
          b:SetWidth(size)
          b:SetHeight(size)
-         b.cooldown:SetScale(size / b.cooldown:GetWidth())  -- Scale cooldown so it will stay centered on the button.
+         b.cooldown:SetScale(size / b.cooldown:GetWidth())
          b:SetBackdropColor(Flyout_Config['BORDER_COLOR'][1], Flyout_Config['BORDER_COLOR'][2], Flyout_Config['BORDER_COLOR'][3])
          b:Show()
 
          b:GetNormalTexture():SetTexture(texture)
-         b:GetPushedTexture():SetTexture(texture)  -- Without this, icons disappear on click.
+         b:GetPushedTexture():SetTexture(texture)
 
          -- Highlight professions and channeled casts.
          if b.flyoutActionType == 0 and IsCurrentCast(b.flyoutAction, 'spell') then
