@@ -1,3 +1,20 @@
+Changes -   
+New keywords - item, selfItem, rightSelfItem, selfCast, rightSelfCast (standard cast if not specified)  
+Direction keywords - [up], [down], [left], [right] (default behaviour used if not specif ied)  
+Removed right-click reordering.  
+  
+Example -   
+/flyout [up]  rightSelfCast Flash Heal; rightSelfItem Scroll of Spirit; selfCast Heal; item Nordanaar Herbal Tea; Holy Nova  
+  
+[up]  - Flypout pops upwards;  
+rightSelfCast Flash Heal - left click casts Flash Heal on target and right on self;  
+rightSelfItem Scroll of Spirit - same as above but an item;  
+selfCast Heal - left click casts heal on self;  
+item Nordanaar Herbal Tea - drinks Tea;   
+Holy Nova - normal action, casts Holy Nova.  
+  
+*******************************************************************************************  
+
 ## How to
 
 1. Open your macros and create a new macro
