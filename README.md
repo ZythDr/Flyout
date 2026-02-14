@@ -61,6 +61,7 @@ Example:
 
 1. Create a macro.
 2. Put a `/flyout ...` line in the macro body.
+   - `/flyout` can be on any line (for example after a `#showtooltip` line added by macro addons).
 3. Place the macro on an action bar.
 
 ## Compatibility

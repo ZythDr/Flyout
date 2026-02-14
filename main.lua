@@ -80,6 +80,21 @@ local function strsplit(str, delimiter, fillTable)
    return fillTable
 end
 
+local function ExtractFlyoutBody(macroBody)
+   if not macroBody then
+      return
+   end
+
+   local lines = strsplit(macroBody, '\n')
+   for i = 1, sizeof(lines) do
+      local line = lines[i]
+      local _, e = strfind(line, '^%s*/flyout%s*')
+      if e then
+         return strsub(line, e + 1)
+      end
+   end
+end
+
 local function BuildBagItemCache()
    if not bagCacheDirty then
       return
@@ -342,12 +357,14 @@ local function UpdateBarButton(slot)
          local macro = GetActionText(slot)
          if macro then
             local _, _, body = GetMacroInfo(GetMacroIndexByName(macro))
-            local s, e = strfind(body, '/flyout')
-            if s and s == 1 and e == 7 then
+            local flyoutBody = ExtractFlyoutBody(body)
+            if flyoutBody then
                if not button.preFlyoutOnEnter then
                   button.preFlyoutOnEnter = button:GetScript('OnEnter')
                   button.preFlyoutOnLeave = button:GetScript('OnLeave')
                end
+
+               body = flyoutBody
 
                -- Identify sticky menus.
                if strfind(body, '%[sticky%]') then
@@ -367,8 +384,6 @@ local function UpdateBarButton(slot)
                   body = strgsub(body, "%[left%]", "")
                   body = strgsub(body, "%[right%]", "")
                end
-
-               body = strsub(body, e + 1)
 
                if not button.flyoutActions then
                   button.flyoutActions = {}
