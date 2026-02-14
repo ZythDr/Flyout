@@ -1,41 +1,72 @@
-Changes -   
-New keywords - item, selfItem, rightSelfItem, selfCast, rightSelfCast (standard cast if not specified)  
-Direction keywords - [up], [down], [left], [right] (default behaviour used if not specif ied)  
-Removed right-click reordering.  
-  
-Example -   
-/flyout [up]  rightSelfCast Flash Heal; rightSelfItem Scroll of Spirit; selfCast Heal; item Nordanaar Herbal Tea; Holy Nova  
-  
-[up]  - Flypout pops upwards;  
-rightSelfCast Flash Heal - left click casts Flash Heal on target and right on self;  
-rightSelfItem Scroll of Spirit - same as above but an item;  
-selfCast Heal - left click casts heal on self;  
-item Nordanaar Herbal Tea - drinks Tea;   
-Holy Nova - normal action, casts Holy Nova.  
-  
-*******************************************************************************************  
+# Flyout
 
-## How to
+Flyout is a WoW Vanilla (1.12) addon that mimics retail-style flyout action buttons.
 
-1. Open your macros and create a new macro
-2. In the macro body, start by typing `/flyout` and then the names of the spells separated by a semicolon
+## What This Fork Adds
 
-   - To use a specific rank, you can write `Frostbolt(Rank 1)` (omitting the rank will use the highest rank)
-   - Example: `/flyout Summon Imp; Summon Voidwalker; Summon Felhunter`
-     
-3. Drag the newly created macro to one of your action bars and you're good to go
+- Item support in flyout entries (`item`, `selfItem`, `rightSelfItem`)
+- Spell self-cast variants (`selfCast`, `rightSelfCast`)
+- Working auto-direction fallback (no required `[up]/[down]/[left]/[right]` workaround)
+- Item tooltips on flyout buttons
+- Item stack counters on flyout buttons
+  - Counts are summed across all bag stacks of the same item
+  - Stackable items show count (including `1`)
+  - Non-stackable items do not show a count
+- Optional pfUI count-font inheritance (if pfUI is loaded)
+- Bag snapshot caching for efficient updates (rebuilds on `BAG_UPDATE`)
 
-Clicking the flyout or using the keybind of the action button that the flyout is assigned to will use the flyout's default action. The default action of a flyout is the first action (spell or macro) in the flyout macro. You can right-click a flyout action to set it as the default action on the fly.
+## Macro Syntax
 
-The macro command also supports certain modifiers that modify the behavior of the macro:
-- `[sticky]` - flyout will remain opened after using one of its items
-- `[icon]` - flyout icon will use the icon of its default action
+Base format:
+
+```lua
+/flyout Action1; Action2; Action3
+```
+
+Actions can be:
+
+- Spell name (e.g. `Flash Heal`, `Frostbolt(Rank 1)`)
+- Macro name
+- Item name (auto-detected if currently in bags)
+
+Keywords:
+
+- `item <name>`: use item
+- `selfItem <name>`: use item on self
+- `rightSelfItem <name>`: left-click normal use, right-click self-use
+- `selfCast <spell>`: cast spell on self
+- `rightSelfCast <spell>`: left-click normal cast, right-click self-cast
+
+Direction modifiers:
+
+- `[up]`, `[down]`, `[left]`, `[right]`
+
+Other modifiers:
+
+- `[sticky]` keeps flyout open after use
+- `[icon]` uses the first flyout action icon on the parent button
+
+Example:
+
+```lua
+/flyout [up] rightSelfCast Flash Heal; rightSelfItem Scroll of Spirit; selfCast Heal; item Nordanaar Herbal Tea; Holy Nova
+```
+
+## Item Availability Behavior
+
+- If an item is not in your bags, that entry is hidden from the opened flyout.
+- When restocked, it appears again the next time the flyout is opened.
+
+## Setup
+
+1. Create a macro.
+2. Put a `/flyout ...` line in the macro body.
+3. Place the macro on an action bar.
 
 ## Compatibility
 
-The add-on relies on functions provided by the default action bar and action button logic implemented by Blizzard. Some add-ons override these functions or use their own and therefore may not work together with this add-on.
+Tested with:
 
-Tested and confirmed working with:
 - ElvUI
 - pfUI
 - Bartender2

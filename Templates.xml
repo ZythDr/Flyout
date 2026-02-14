@@ -34,11 +34,7 @@
             </OnClick>
             <OnEnter>
                 GameTooltip_SetDefaultAnchor(GameTooltip, this)
-                if this.flyoutActionType == 0 then
-                    GameTooltip:SetSpell(this.flyoutAction, 'spell')
-                elseif this.flyoutActionType == 1 then
-                    GameTooltip:SetText(GetMacroInfo(this.flyoutAction), 1, 1, 1)
-                end
+                Flyout_SetTooltip(this)
                 GameTooltip:Show()
             </OnEnter>
             <OnLeave>

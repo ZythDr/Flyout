@@ -42,6 +42,9 @@ local strgsub = string.gsub
 local strlower = string.lower
 local strsub = string.sub
 
+local bagItemCache = {}
+local bagCacheDirty = true
+
 -- helper functions
 local function strtrim(str)
    local _, e = strfind(str, '^%s*')
@@ -77,23 +80,131 @@ local function strsplit(str, delimiter, fillTable)
    return fillTable
 end
 
-local function FindItemInBags(name)
-   if not name then return end
-   local search = strlower(name)
+local function BuildBagItemCache()
+   if not bagCacheDirty then
+      return
+   end
+
+   tblclear(bagItemCache)
+
    for bag = 0, 4 do
       local slots = GetContainerNumSlots(bag)
       if slots then
          for slot = 1, slots do
             local link = GetContainerItemLink(bag, slot)
             if link then
-               local _, _, itemName = string.find(link, "%[(.+)%]")
-               if itemName and strlower(itemName) == search then
-                  local texture = GetContainerItemInfo(bag, slot)
-                  return bag, slot, texture
+               local _, _, itemName = strfind(link, "%[(.+)%]")
+               if itemName then
+                  local key = strlower(itemName)
+                  local texture, count = GetContainerItemInfo(bag, slot)
+                  local maxStack = nil
+                  local _, _, itemID = strfind(link, "item:(%d+)")
+                  itemID = tonumber(itemID)
+
+                  if itemID then
+                     local _, _, _, _, _, _, _, stackByID = GetItemInfo(itemID)
+                     maxStack = tonumber(stackByID)
+                  end
+
+                  if not maxStack then
+                     local _, _, _, _, _, _, _, stackByName = GetItemInfo(itemName)
+                     maxStack = tonumber(stackByName)
+                  end
+
+                  if not maxStack then
+                     local _, _, _, _, _, _, _, stackByLink = GetItemInfo(link)
+                     maxStack = tonumber(stackByLink)
+                  end
+
+                  -- If metadata is missing, only treat as stackable when a stack is visibly larger than 1.
+                  local stackable = (maxStack and maxStack > 1) or (not maxStack and (count or 1) > 1)
+                  count = count or 1
+
+                  local itemData = bagItemCache[key]
+                  if itemData then
+                     itemData.count = itemData.count + count
+                     itemData.stackable = itemData.stackable or stackable
+                  else
+                     bagItemCache[key] = {
+                        bag = bag,
+                        slot = slot,
+                        texture = texture,
+                        count = count,
+                        stackable = stackable,
+                     }
+                  end
                end
             end
          end
       end
+   end
+
+   bagCacheDirty = false
+end
+
+local function FindItemInBags(name)
+   if not name then return end
+   BuildBagItemCache()
+
+   local itemData = bagItemCache[strlower(name)]
+   if itemData then
+      return itemData.bag, itemData.slot, itemData.texture, itemData.count, itemData.stackable
+   end
+end
+
+local function GetPfUIFlyoutCountStyle()
+   if not (_G.pfUI and _G.pfUI_config) then
+      return
+   end
+
+   local source = _G["pfActionBarMainButton1Count"]
+   if source and source.GetFont then
+      local font, size, flags = source:GetFont()
+      local r, g, b, a = source:GetTextColor()
+      if font and size then
+         return font, size, flags, r, g, b, a, source:GetJustifyH(), source:GetJustifyV()
+      end
+   end
+
+   local media = _G.pfUI and _G.pfUI.media
+   local bars = _G.pfUI_config and _G.pfUI_config.bars
+   if not media or not bars then
+      return
+   end
+
+   local font = media[bars.font]
+   local size = tonumber(bars.count_size)
+   if size == 0 then size = 1 end
+
+   local r, g, b, a = 1, 1, 1, 1
+   if bars.count_color then
+      local _, _, c1, c2, c3, c4 = string.find(bars.count_color, "^%s*([^,]+),%s*([^,]+),%s*([^,]+),?%s*([^,]*)")
+      r = tonumber(c1) or r
+      g = tonumber(c2) or g
+      b = tonumber(c3) or b
+      a = tonumber(c4) or a
+   end
+
+   return font, size, "OUTLINE", r, g, b, a, "RIGHT", "BOTTOM"
+end
+
+local function ApplyCountStyle(button, font, size, flags, r, g, b, a, justifyH, justifyV)
+   local countText = _G[button:GetName() .. "Count"]
+   if not countText then
+      return
+   end
+
+   if font and size and size > 0 then
+      countText:SetFont(font, size, flags or "OUTLINE")
+   end
+   if r and g and b then
+      countText:SetTextColor(r, g, b, a or 1)
+   end
+   if justifyH then
+      countText:SetJustifyH(justifyH)
+   end
+   if justifyV then
+      countText:SetJustifyV(justifyV)
    end
 end
 
@@ -290,6 +401,9 @@ local function UpdateBarButton(slot)
    end
 end
 
+local FlyoutBarButton_UpdateCooldown
+local FlyoutBarButton_UpdateCount
+
 local function HandleEvent()
    if event == 'VARIABLES_LOADED' then
       if not Flyout_Config or (Flyout_Config['REVISION'] == nil or Flyout_Config['REVISION'] ~= revision) then
@@ -304,6 +418,20 @@ local function HandleEvent()
    elseif event == 'ACTIONBAR_SLOT_CHANGED' then
       Flyout_Hide(true)  -- Keep sticky menus open.
       UpdateBarButton(arg1)
+   elseif event == 'BAG_UPDATE' then
+      bagCacheDirty = true
+      BuildBagItemCache()
+
+      local i = 1
+      local button = _G['FlyoutButton' .. i]
+      while button do
+         if button:IsVisible() and (button.flyoutActionType == 2 or button.flyoutActionType == 5 or button.flyoutActionType == 6) then
+            FlyoutBarButton_UpdateCount(button)
+            FlyoutBarButton_UpdateCooldown(button, true)
+         end
+         i = i + 1
+         button = _G['FlyoutButton' .. i]
+      end
    else
       Flyout_Hide()
       Flyout_UpdateBars()
@@ -315,6 +443,7 @@ handler:RegisterEvent('VARIABLES_LOADED')
 handler:RegisterEvent('PLAYER_ENTERING_WORLD')
 handler:RegisterEvent('ACTIONBAR_SLOT_CHANGED')
 handler:RegisterEvent('ACTIONBAR_PAGE_CHANGED')
+handler:RegisterEvent('BAG_UPDATE')
 handler:SetScript('OnEvent', HandleEvent)
 
 -- globals
@@ -381,6 +510,50 @@ function Flyout_OnClick(button)
    end
 end
 
+function Flyout_SetTooltip(button)
+   if not button or not button.flyoutActionType or not button.flyoutAction then
+      return
+   end
+
+   local actionType = button.flyoutActionType
+   local action = button.flyoutAction
+
+   if actionType == 0 then
+      GameTooltip:SetSpell(action, 'spell')
+      return
+   end
+
+   if actionType == 1 then
+      GameTooltip:SetText(GetMacroInfo(action), 1, 1, 1)
+      return
+   end
+
+   if actionType == 3 or actionType == 4 then
+      local slot = GetSpellSlotByName(action)
+      if slot then
+         GameTooltip:SetSpell(slot, 'spell')
+      else
+         GameTooltip:SetText(action, 1, 1, 1)
+      end
+      return
+   end
+
+   if actionType == 2 or actionType == 5 or actionType == 6 then
+      local bag, slot = button.flyoutItemBag, button.flyoutItemSlot
+      if not bag then
+         bag, slot = FindItemInBags(action)
+         button.flyoutItemBag = bag
+         button.flyoutItemSlot = slot
+      end
+
+      if bag and slot then
+         GameTooltip:SetBagItem(bag, slot)
+      else
+         GameTooltip:SetText(action, 1, 1, 1)
+      end
+   end
+end
+
 function Flyout_ExecuteMacro(macro)
    local _, _, body = GetMacroInfo(macro)
    local commands = strsplit(body, '\n')
@@ -419,7 +592,7 @@ end
 -- Reusable variables for FlyoutBarButton_UpdateCooldown().
 local cooldownStart, cooldownDuration, cooldownEnable
 
-local function FlyoutBarButton_UpdateCooldown(button, reset)
+FlyoutBarButton_UpdateCooldown = function(button, reset)
    button = button or this
 
    if button.flyoutActionType == 0 or button.flyoutActionType == 3 or button.flyoutActionType == 4 then
@@ -463,6 +636,30 @@ local function FlyoutBarButton_UpdateCooldown(button, reset)
    end
 end
 
+FlyoutBarButton_UpdateCount = function(button)
+   button = button or this
+   local countText = _G[button:GetName() .. 'Count']
+   if not countText then
+      return
+   end
+
+   local count = nil
+   local stackable = false
+   if button.flyoutActionType == 2 or button.flyoutActionType == 5 or button.flyoutActionType == 6 then
+      local bag, slot, _, total, isStackable = FindItemInBags(button.flyoutAction)
+      button.flyoutItemBag = bag
+      button.flyoutItemSlot = slot
+      count = total
+      stackable = isStackable
+   end
+
+   if stackable and count and count > 0 then
+      countText:SetText(count)
+   else
+      countText:SetText('')
+   end
+end
+
 local function FlyoutButton_OnUpdate()
    -- Update tooltip.
    if GetMouseFocus() == this and (not this.lastUpdate or GetTime() - this.lastUpdate > 1) then
@@ -473,9 +670,11 @@ local function FlyoutButton_OnUpdate()
 end
 
 function Flyout_Show(button)
-   local direction = button.flyoutDirectionOverride or GetFlyoutDirection_Auto(button)
+   local direction = button.flyoutDirectionOverride or GetFlyoutDirection(button)
    local size = Flyout_Config['BUTTON_SIZE']
    local offset = size
+   local countFont, countSize, countFlags, countR, countG, countB, countA, countJustifyH, countJustifyV = GetPfUIFlyoutCountStyle()
+   BuildBagItemCache()
 
    -- Put arrow above the flyout buttons.
    _G[button:GetName() .. 'FlyoutArrow']:SetFrameStrata('FULLSCREEN')
@@ -527,6 +726,7 @@ function Flyout_Show(button)
          b:SetHeight(size)
          b.cooldown:SetScale(size / b.cooldown:GetWidth())
          b:SetBackdropColor(Flyout_Config['BORDER_COLOR'][1], Flyout_Config['BORDER_COLOR'][2], Flyout_Config['BORDER_COLOR'][3])
+         ApplyCountStyle(b, countFont, countSize, countFlags, countR, countG, countB, countA, countJustifyH, countJustifyV)
          b:Show()
 
          b:GetNormalTexture():SetTexture(texture)
@@ -540,6 +740,7 @@ function Flyout_Show(button)
          -- Force an instant update.
          this.lastUpdate = nil
          FlyoutBarButton_UpdateCooldown(b, true)
+         FlyoutBarButton_UpdateCount(b)
 
          if direction == 'BOTTOM' then
             b:SetPoint('BOTTOM', button, 0, -offset)
