@@ -167,6 +167,210 @@ local function FindItemInBags(name)
    end
 end
 
+local function GetItemNameFromLink(link)
+   if not link then
+      return
+   end
+
+   local _, _, itemName = strfind(link, "%[(.+)%]")
+   return itemName
+end
+
+local function ApplyTooltipInfo(tooltipInfo)
+   if not tooltipInfo then
+      return nil
+   end
+
+   if tooltipInfo.mode == "spell_slot" and tooltipInfo.spellSlot then
+      GameTooltip:SetSpell(tooltipInfo.spellSlot, tooltipInfo.bookType or 'spell')
+      return true
+   end
+
+   if tooltipInfo.mode == "spell_name" and tooltipInfo.spellName then
+      local slot = GetSpellSlotByName(tooltipInfo.spellName)
+      if slot then
+         GameTooltip:SetSpell(slot, 'spell')
+      else
+         GameTooltip:SetText(tooltipInfo.spellName, 1, 1, 1)
+      end
+      return true
+   end
+
+   if tooltipInfo.mode == "item_bag" and tooltipInfo.bag and tooltipInfo.slot then
+      GameTooltip:SetBagItem(tooltipInfo.bag, tooltipInfo.slot)
+      return true
+   end
+
+   if tooltipInfo.mode == "item_inv" and tooltipInfo.slot then
+      GameTooltip:SetInventoryItem("player", tooltipInfo.slot)
+      return true
+   end
+
+   if tooltipInfo.mode == "item_link" and tooltipInfo.link then
+      GameTooltip:SetHyperlink(tooltipInfo.link)
+      return true
+   end
+
+   if tooltipInfo.mode == "text" and tooltipInfo.text then
+      GameTooltip:SetText(tooltipInfo.text, 1, 1, 1)
+      return true
+   end
+end
+
+local function ResolveSCRMTooltipAction(actionInfo, fallbackTexture, depth)
+   if not actionInfo or depth > 3 then
+      return { mode = "macro_text", texture = fallbackTexture }
+   end
+
+   local tooltipInfo = {
+      mode = "macro_text",
+      texture = actionInfo.texture or fallbackTexture,
+   }
+
+   if actionInfo.spell then
+      if actionInfo.spell.spellSlot then
+         tooltipInfo.mode = "spell_slot"
+         tooltipInfo.spellSlot = actionInfo.spell.spellSlot
+         tooltipInfo.bookType = actionInfo.spell.bookType or 'spell'
+      elseif actionInfo.action then
+         tooltipInfo.mode = "spell_name"
+         tooltipInfo.spellName = actionInfo.action
+      end
+      return tooltipInfo
+   end
+
+   if actionInfo.item then
+      tooltipInfo.itemName = actionInfo.action
+      if actionInfo.item.bagID and actionInfo.item.slot then
+         tooltipInfo.mode = "item_bag"
+         tooltipInfo.bag = actionInfo.item.bagID
+         tooltipInfo.slot = actionInfo.item.slot
+      elseif actionInfo.item.inventoryID then
+         tooltipInfo.mode = "item_inv"
+         tooltipInfo.slot = actionInfo.item.inventoryID
+      elseif actionInfo.item.link then
+         tooltipInfo.mode = "item_link"
+         tooltipInfo.link = actionInfo.item.link
+      elseif actionInfo.action then
+         local bag, slot = FindItemInBags(actionInfo.action)
+         if bag then
+            tooltipInfo.mode = "item_bag"
+            tooltipInfo.bag = bag
+            tooltipInfo.slot = slot
+         end
+      end
+      return tooltipInfo
+   end
+
+   if actionInfo.macro and type(actionInfo.macro) == "table" then
+      return ResolveSCRMTooltipAction(actionInfo.macro, tooltipInfo.texture, depth + 1)
+   end
+
+   if actionInfo.action then
+      tooltipInfo.mode = "spell_name"
+      tooltipInfo.spellName = actionInfo.action
+      return tooltipInfo
+   end
+
+   return tooltipInfo
+end
+
+local function ExtractShowtooltipArg(macroBody)
+   if not macroBody then
+      return
+   end
+
+   local lines = strsplit(macroBody, '\n')
+   for i = 1, sizeof(lines) do
+      local line = lines[i]
+      local _, _, arg = strfind(line, '^%s*#showtooltip%s*(.-)%s*$')
+      if arg ~= nil then
+         arg = strtrim(arg)
+         if arg == "" then
+            return ""
+         end
+         -- Remove bracket conditionals for a best-effort static fallback.
+         arg = strgsub(arg, "%b[]", "")
+         arg = strtrim(arg)
+         return arg
+      end
+   end
+end
+
+local function ResolveMacroShowtooltip(macroIndex, depth)
+   depth = depth or 0
+
+   local macroName, macroTexture, macroBody = GetMacroInfo(macroIndex)
+   local fallback = {
+      mode = "text",
+      text = macroName,
+      texture = macroTexture,
+   }
+
+   if _G.CleveRoids and _G.CleveRoids.GetMacro and macroName then
+      local ok, macroData = pcall(_G.CleveRoids.GetMacro, macroName)
+      if ok and macroData and macroData.actions and macroData.actions.tooltip then
+         local resolved = ResolveSCRMTooltipAction(macroData.actions.tooltip, macroTexture, 0)
+         if resolved then
+            resolved.text = resolved.text or macroName
+            return resolved
+         end
+      end
+   end
+
+   local showtooltipArg = ExtractShowtooltipArg(macroBody)
+   if showtooltipArg == "" then
+      return fallback
+   end
+
+   if showtooltipArg and showtooltipArg ~= "" then
+      local nestedMacro = GetMacroIndexByName(showtooltipArg)
+      if nestedMacro and nestedMacro > 0 and depth < 3 then
+         local nested = ResolveMacroShowtooltip(nestedMacro, depth + 1)
+         if nested then
+            nested.text = nested.text or macroName
+            return nested
+         end
+      end
+
+      local spellSlot = GetSpellSlotByName(showtooltipArg)
+      if spellSlot then
+         return {
+            mode = "spell_slot",
+            spellSlot = spellSlot,
+            bookType = 'spell',
+            texture = GetSpellTexture(spellSlot, 'spell') or macroTexture,
+            text = macroName,
+         }
+      end
+
+      local bag, slot, texture = FindItemInBags(showtooltipArg)
+      if bag then
+         return {
+            mode = "item_bag",
+            bag = bag,
+            slot = slot,
+            itemName = showtooltipArg,
+            texture = texture or macroTexture,
+            text = macroName,
+         }
+      end
+
+      local _, itemLink = GetItemInfo(showtooltipArg)
+      if itemLink then
+         return {
+            mode = "item_link",
+            link = itemLink,
+            itemName = GetItemNameFromLink(itemLink) or showtooltipArg,
+            texture = macroTexture,
+            text = macroName,
+         }
+      end
+   end
+
+   return fallback
+end
+
 local function GetPfUIFlyoutCountStyle()
    if not (_G.pfUI and _G.pfUI_config) then
       return
@@ -440,7 +644,7 @@ local function HandleEvent()
       local i = 1
       local button = _G['FlyoutButton' .. i]
       while button do
-         if button:IsVisible() and (button.flyoutActionType == 2 or button.flyoutActionType == 5 or button.flyoutActionType == 6) then
+         if button:IsVisible() and (button.flyoutActionType == 1 or button.flyoutActionType == 2 or button.flyoutActionType == 5 or button.flyoutActionType == 6) then
             FlyoutBarButton_UpdateCount(button)
             FlyoutBarButton_UpdateCooldown(button, true)
          end
@@ -539,6 +743,9 @@ function Flyout_SetTooltip(button)
    end
 
    if actionType == 1 then
+      if button.flyoutMacroTooltip and ApplyTooltipInfo(button.flyoutMacroTooltip) then
+         return
+      end
       GameTooltip:SetText(GetMacroInfo(action), 1, 1, 1)
       return
    end
@@ -666,6 +873,26 @@ FlyoutBarButton_UpdateCount = function(button)
       button.flyoutItemSlot = slot
       count = total
       stackable = isStackable
+   elseif button.flyoutActionType == 1 and button.flyoutMacroTooltip then
+      local tooltipInfo = button.flyoutMacroTooltip
+      local countName = tooltipInfo.itemName
+
+      if not countName and tooltipInfo.link then
+         countName = GetItemNameFromLink(tooltipInfo.link)
+      end
+
+      if not countName and tooltipInfo.mode == "item_bag" and tooltipInfo.bag and tooltipInfo.slot then
+         local link = GetContainerItemLink(tooltipInfo.bag, tooltipInfo.slot)
+         countName = GetItemNameFromLink(link)
+      end
+
+      if countName and countName ~= "" then
+         local bag, slot, _, total, isStackable = FindItemInBags(countName)
+         button.flyoutItemBag = bag
+         button.flyoutItemSlot = slot
+         count = total
+         stackable = isStackable
+      end
    end
 
    if stackable and count and count > 0 then
@@ -716,11 +943,16 @@ function Flyout_Show(button)
 
       b.flyoutItemBag = nil
       b.flyoutItemSlot = nil
+      b.flyoutMacroTooltip = nil
 
       if b.flyoutActionType == 0 then
          texture = GetSpellTexture(b.flyoutAction, 'spell')
       elseif b.flyoutActionType == 1 then
-         _, texture = GetMacroInfo(b.flyoutAction)
+         b.flyoutMacroTooltip = ResolveMacroShowtooltip(b.flyoutAction, 0)
+         texture = b.flyoutMacroTooltip and b.flyoutMacroTooltip.texture
+         if not texture then
+            _, texture = GetMacroInfo(b.flyoutAction)
+         end
       elseif b.flyoutActionType == 2 then
          local bag, slot, tex = FindItemInBags(b.flyoutAction)
          b.flyoutItemBag = bag

@@ -6,12 +6,14 @@ Flyout is a WoW Vanilla (1.12) addon that mimics retail-style flyout action butt
 
 - Item support in flyout entries (`item`, `selfItem`, `rightSelfItem`)
 - Spell self-cast variants (`selfCast`, `rightSelfCast`)
+- Macro-entry `#showtooltip` passthrough for flyout icon/tooltip (with SuperCleveRoidMacros metadata when available)
 - Working auto-direction fallback (no required `[up]/[down]/[left]/[right]` workaround)
 - Item tooltips on flyout buttons
 - Item stack counters on flyout buttons
   - Counts are summed across all bag stacks of the same item
   - Stackable items show count (including `1`)
   - Non-stackable items do not show a count
+  - Macro flyout entries that resolve to `#showtooltip` items also use total-in-bags counts
 - Optional pfUI count-font inheritance (if pfUI is loaded)
 - Bag snapshot caching for efficient updates (rebuilds on `BAG_UPDATE`)
 
